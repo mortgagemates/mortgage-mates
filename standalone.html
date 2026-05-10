@@ -1,0 +1,1533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Mortgage Mates — B2B PDF Extractor</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .spin { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+</style>
+<script>
+  tailwind.config = {
+    theme: { extend: { fontFamily: { sans: ['Inter','system-ui','sans-serif'] } } }
+  };
+</script>
+</head>
+<body class="bg-slate-50 antialiased">
+<div id="root"><div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:Inter,sans-serif;color:#64748b;font-size:14px">Loading Mortgage Mates…</div></div>
+
+<script type="text/babel">
+const { useState, useEffect, useContext, createContext, useCallback, useRef } = React;
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+const S = {
+  getBrokers: () => JSON.parse(localStorage.getItem('mm_brokers') || '[]'),
+  saveBroker(b) {
+    const all = S.getBrokers(); const i = all.findIndex(x => x.id === b.id);
+    if (i >= 0) all[i] = b; else all.push(b);
+    localStorage.setItem('mm_brokers', JSON.stringify(all));
+  },
+  getBrokerByEmail: e => S.getBrokers().find(b => b.email.toLowerCase() === e.toLowerCase()),
+  getBrokerById: id => S.getBrokers().find(b => b.id === id),
+  getApps: () => JSON.parse(localStorage.getItem('mm_apps') || '[]'),
+  saveApp(a) {
+    const all = S.getApps(); const i = all.findIndex(x => x.id === a.id);
+    if (i >= 0) all[i] = a; else all.push(a);
+    localStorage.setItem('mm_apps', JSON.stringify(all));
+  },
+  getAppById: id => S.getApps().find(a => a.id === id),
+  getAppsByBroker: bid => S.getApps().filter(a => a.brokerId === bid),
+  getCurrentBrokerId: () => localStorage.getItem('mm_current_broker'),
+  setCurrentBroker: id => id ? localStorage.setItem('mm_current_broker', id) : localStorage.removeItem('mm_current_broker'),
+  isAdmin: () => localStorage.getItem('mm_admin') === '1',
+  setAdmin: v => v ? localStorage.setItem('mm_admin','1') : localStorage.removeItem('mm_admin'),
+};
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function genId(prefix) {
+  const c = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let r = prefix + '-';
+  for (let i=0;i<8;i++) r += c[Math.floor(Math.random()*c.length)];
+  return r;
+}
+function fmtDate(iso) {
+  return new Date(iso).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+}
+function fmtDT(iso) {
+  return new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function extractPdf() {
+  return {
+    applicantName:'John Michael Smith', applicantDob:'15/03/1985', applicantNin:'AB 12 34 56 C',
+    propertyAddress:'42 Oakwood Avenue, Manchester, M14 5TR', propertyType:'Semi-Detached',
+    purchasePrice:'£285,000', loanAmount:'£228,000', depositAmount:'£57,000',
+    loanToValue:'80%', interestRate:'4.75%', loanTerm:'25 Years', repaymentType:'Repayment',
+    employmentStatus:'Employed (Full-Time)', employerName:'TechCorp Solutions Ltd',
+    annualIncome:'£62,500', creditScore:'742', lenderName:'Nationwide Building Society',
+    commitmentDate: new Date().toLocaleDateString('en-GB'),
+    expiryDate: new Date(Date.now()+90*86400000).toLocaleDateString('en-GB'),
+  };
+}
+
+// ─── Seed data ────────────────────────────────────────────────────────────────
+function seedData() {
+  if (S.getBrokers().length > 0) return;
+  const now = new Date().toISOString();
+  S.saveBroker({ id:'MM-BR-DEMO0001', name:'Sarah Thompson', companyName:'Thompson Mortgage Advisors Ltd',
+    officeAddress:'15 Finance Street, London', postalCode:'EC2V 8RT', phoneNumber:'+44 20 7946 0123',
+    email:'demo@broker.com', password:'demo1234', emailVerified:true, paymentCompleted:true,
+    subscriptionStart:now, subscriptionEnd:new Date(Date.now()+365*86400000).toISOString(), createdAt:now });
+  [
+    { id:'MM-APP-DEMO0001', brokerId:'MM-BR-DEMO0001', applicationName:'Smith Property Purchase',
+      clientName:'John Smith', clientEmail:'john.smith@email.com', status:'approved', progress:100,
+      createdAt:new Date(Date.now()-10*86400000).toISOString(), updatedAt:new Date(Date.now()-2*86400000).toISOString(),
+      commitmentLetterName:'commitment_smith.pdf', creditApplicationName:'credit_smith.pdf', signatureStatus:'signed',
+      signedAt:new Date(Date.now()-3*86400000).toISOString(), extractedData:extractPdf(), intakeFormData:{} },
+    { id:'MM-APP-DEMO0002', brokerId:'MM-BR-DEMO0001', applicationName:'Patel Remortgage',
+      clientName:'Priya Patel', clientEmail:'priya.patel@email.com', status:'in-review', progress:60,
+      createdAt:new Date(Date.now()-5*86400000).toISOString(), updatedAt:new Date(Date.now()-1*86400000).toISOString(),
+      commitmentLetterName:'commitment_patel.pdf', creditApplicationName:'credit_patel.pdf',
+      signatureStatus:'pending', extractedData:extractPdf(), intakeFormData:{} },
+    { id:'MM-APP-DEMO0003', brokerId:'MM-BR-DEMO0001', applicationName:'Williams First Home',
+      clientName:'Oliver Williams', clientEmail:'o.williams@email.com', status:'pending', progress:30,
+      createdAt:new Date(Date.now()-2*86400000).toISOString(), updatedAt:new Date(Date.now()-1*86400000).toISOString(),
+      signatureStatus:'not-requested', extractedData:{}, intakeFormData:{} },
+  ].forEach(a => S.saveApp(a));
+}
+
+// ─── Router ───────────────────────────────────────────────────────────────────
+const RouterCtx = createContext({ path:'/', navigate:()=>{}, params:{} });
+
+function Router({ children }) {
+  const getHash = () => decodeURIComponent(window.location.hash.slice(1) || '/');
+  const [path, setPath] = useState(getHash);
+  useEffect(() => {
+    const h = () => setPath(getHash());
+    window.addEventListener('hashchange', h);
+    return () => window.removeEventListener('hashchange', h);
+  }, []);
+  const navigate = useCallback((to) => { window.location.hash = to; }, []);
+  return <RouterCtx.Provider value={{ path, navigate, params:{} }}>{children}</RouterCtx.Provider>;
+}
+
+function matchPath(pattern, path) {
+  const pp = pattern.split('/'), ap = path.split('/');
+  if (pp.length !== ap.length) return null;
+  const params = {};
+  for (let i=0; i<pp.length; i++) {
+    if (pp[i].startsWith(':')) { params[pp[i].slice(1)] = ap[i]; }
+    else if (pp[i] !== ap[i]) return null;
+  }
+  return params;
+}
+
+// Route is defined below alongside Routes
+
+function useNavigate() { return useContext(RouterCtx).navigate; }
+function useParams() { return useContext(RouterCtx).params; }
+function useLocation() { return useContext(RouterCtx); }
+
+// ─── App Context ─────────────────────────────────────────────────────────────
+const AppCtx = createContext(null);
+
+function AppProvider({ children }) {
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick(t => t+1), []);
+
+  const currentBroker = (() => {
+    const id = S.getCurrentBrokerId();
+    return id ? S.getBrokerById(id) ?? null : null;
+  })();
+
+  return (
+    <AppCtx.Provider value={{
+      currentBroker, isAdminAuthed: S.isAdmin(),
+      loginBroker(email, pwd) {
+        const b = S.getBrokerByEmail(email);
+        if (!b || b.password !== pwd || !b.emailVerified || !b.paymentCompleted) return false;
+        S.setCurrentBroker(b.id); refresh(); return true;
+      },
+      logoutBroker() { S.setCurrentBroker(null); refresh(); },
+      loginAdmin(e, p) {
+        if (e === 'admin@mortgagemates.com' && p === 'admin@MM2024') { S.setAdmin(true); refresh(); return true; }
+        return false;
+      },
+      logoutAdmin() { S.setAdmin(false); refresh(); },
+      saveBroker(b) { S.saveBroker(b); refresh(); },
+      saveApp(a) { S.saveApp(a); refresh(); },
+      getBrokers: S.getBrokers,
+      getAllApps: S.getApps,
+      getAppsByBroker: S.getAppsByBroker,
+      getAppById: S.getAppById,
+      getBrokerById: S.getBrokerById,
+    }}>
+      {children}
+    </AppCtx.Provider>
+  );
+}
+function useApp() { return useContext(AppCtx); }
+
+// ─── Common Components ────────────────────────────────────────────────────────
+const STATUS_STYLES = {
+  draft:       'bg-slate-100 text-slate-600',
+  pending:     'bg-amber-100 text-amber-700',
+  'in-review': 'bg-blue-100 text-blue-700',
+  submitted:   'bg-purple-100 text-purple-700',
+  approved:    'bg-emerald-100 text-emerald-700',
+  rejected:    'bg-red-100 text-red-700',
+  completed:   'bg-teal-100 text-teal-700',
+};
+const STATUS_LABELS = { draft:'Draft', pending:'Pending', 'in-review':'In Review', submitted:'Submitted', approved:'Approved', rejected:'Rejected', completed:'Completed' };
+
+function StatusBadge({ status }) {
+  const cls = STATUS_STYLES[status] || STATUS_STYLES.draft;
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${cls}`}>{STATUS_LABELS[status] || status}</span>;
+}
+
+function ProgressBar({ value }) {
+  const pct = Math.min(100, Math.max(0, value||0));
+  const col = pct===100?'bg-emerald-500':pct>=60?'bg-blue-500':pct>=30?'bg-amber-500':'bg-slate-400';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all duration-500 ${col}`} style={{width:`${pct}%`}}/>
+      </div>
+      <span className="text-xs font-medium text-slate-500 w-8 text-right">{pct}%</span>
+    </div>
+  );
+}
+
+function Modal({ title, onClose, children, size='md' }) {
+  const sizes = { sm:'max-w-sm', md:'max-w-lg', lg:'max-w-2xl' };
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-slate-900/50" onClick={onClose}/>
+      <div className={`relative w-full ${sizes[size]} bg-white rounded-2xl shadow-2xl`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h3 className="text-base font-semibold text-slate-900">{title}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100">✕</button>
+        </div>
+        <div className="p-6">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Spinner() { return <div className="spin w-4 h-4 border-2 border-current border-t-transparent rounded-full"/>; }
+
+// ─── Layouts ──────────────────────────────────────────────────────────────────
+function BrokerLayout({ children }) {
+  const navigate = useNavigate();
+  const { currentBroker, logoutBroker } = useApp();
+  const { path } = useLocation();
+  const NAV = [
+    { to:'/broker/dashboard', label:'Dashboard', icon:'▦' },
+    { to:'/broker/applications', label:'Applications', icon:'📄' },
+  ];
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden">
+      <aside className="w-64 flex flex-col bg-slate-900 shrink-0">
+        <div className="px-6 py-5 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-500 flex items-center justify-center text-white font-bold text-sm">M</div>
+            <div><p className="text-sm font-bold text-white">Mortgage Mates</p><p className="text-xs text-slate-400">Broker Portal</p></div>
+          </div>
+        </div>
+        {currentBroker && (
+          <div className="px-3 mt-4">
+            <div className="bg-slate-800 rounded-xl border border-slate-700 px-4 py-3">
+              <p className="text-xs text-slate-400 mb-1">Broker ID</p>
+              <p className="text-xs font-mono text-blue-400 font-semibold">{currentBroker.id}</p>
+              <p className="text-sm font-semibold text-white mt-1.5 truncate">{currentBroker.name}</p>
+              <p className="text-xs text-slate-400 truncate">{currentBroker.companyName}</p>
+            </div>
+          </div>
+        )}
+        <div className="px-3 mt-4">
+          <button onClick={() => navigate('/broker/applications/new')} className="flex items-center gap-2 w-full px-3 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-lg transition-colors">
+            <span className="text-lg leading-none">+</span> New Application
+          </button>
+        </div>
+        <nav className="flex-1 px-3 mt-4 space-y-1">
+          {NAV.map(n => {
+            const active = path === n.to || path.startsWith(n.to + '/');
+            return (
+              <button key={n.to} onClick={() => navigate(n.to)} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left ${active ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+                <span>{n.icon}</span>{n.label}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="px-3 pb-5 border-t border-slate-800 pt-4">
+          <button onClick={() => { logoutBroker(); navigate('/broker/login'); }} className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+            ← Sign Out
+          </button>
+        </div>
+      </aside>
+      <main className="flex-1 overflow-y-auto">{children}</main>
+    </div>
+  );
+}
+
+function AdminLayout({ children }) {
+  const navigate = useNavigate();
+  const { logoutAdmin } = useApp();
+  const { path } = useLocation();
+  const NAV = [
+    { to:'/admin/dashboard', label:'Dashboard', icon:'▦' },
+    { to:'/admin/brokers', label:'Brokers', icon:'👥' },
+  ];
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden">
+      <aside className="w-64 flex flex-col bg-slate-900 shrink-0">
+        <div className="px-6 py-5 border-b border-slate-800">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-violet-500 flex items-center justify-center text-white font-bold text-sm">A</div>
+            <div><p className="text-sm font-bold text-white">Mortgage Mates</p><p className="text-xs text-slate-400">Administrator</p></div>
+          </div>
+        </div>
+        <div className="px-4 py-3 mx-3 mt-4 bg-violet-900/40 rounded-xl border border-violet-700/30">
+          <p className="text-xs text-violet-300">Signed in as</p>
+          <p className="text-sm font-semibold text-white mt-0.5">Admin User</p>
+          <p className="text-xs text-slate-400">admin@mortgagemates.com</p>
+        </div>
+        <nav className="flex-1 px-3 mt-6 space-y-1">
+          {NAV.map(n => {
+            const active = path === n.to || path.startsWith(n.to + '/');
+            return (
+              <button key={n.to} onClick={() => navigate(n.to)} className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm font-medium transition-colors text-left ${active ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'}`}>
+                <span>{n.icon}</span>{n.label}
+              </button>
+            );
+          })}
+        </nav>
+        <div className="px-3 pb-5 border-t border-slate-800 pt-4">
+          <button onClick={() => { logoutAdmin(); navigate('/admin'); }} className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-sm text-slate-400 hover:text-white hover:bg-slate-800 transition-colors">
+            ← Sign Out
+          </button>
+        </div>
+      </aside>
+      <main className="flex-1 overflow-y-auto">{children}</main>
+    </div>
+  );
+}
+
+// ─── Landing Page ─────────────────────────────────────────────────────────────
+function Landing() {
+  const navigate = useNavigate();
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex flex-col">
+      <header className="px-8 py-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-500 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/30">M</div>
+          <div><p className="text-white font-bold text-lg">Mortgage Mates</p><p className="text-blue-300 text-xs">B2B PDF Extractor Platform</p></div>
+        </div>
+        <button onClick={() => navigate('/admin')} className="text-slate-400 hover:text-white text-sm transition-colors flex items-center gap-1.5">
+          🔒 Admin Access
+        </button>
+      </header>
+      <div className="flex-1 flex flex-col items-center justify-center px-4 text-center">
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full text-blue-300 text-xs font-medium mb-6">
+          🔍 Intelligent Mortgage Document Processing
+        </div>
+        <h1 className="text-5xl font-bold text-white mb-4 tracking-tight leading-tight max-w-2xl">
+          Streamline Your<br/>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400">Mortgage Workflow</span>
+        </h1>
+        <p className="text-slate-400 text-lg max-w-xl mb-10">Extract, review, and manage mortgage applications effortlessly. Purpose-built for brokers who value speed and accuracy.</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg">
+          <button onClick={() => navigate('/broker/login')} className="group flex flex-col items-start p-6 bg-white/5 hover:bg-white/10 border border-white/10 hover:border-blue-500/40 rounded-2xl text-left transition-all">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center mb-3 text-2xl">🏢</div>
+            <p className="text-white font-semibold text-sm mb-1">Broker Portal</p>
+            <p className="text-slate-400 text-xs mb-3">Manage applications and clients</p>
+            <span className="text-blue-400 text-xs font-medium">Sign In →</span>
+          </button>
+          <button onClick={() => navigate('/broker/signup')} className="group flex flex-col items-start p-6 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30 hover:border-blue-400/50 rounded-2xl text-left transition-all">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/30 flex items-center justify-center mb-3 text-2xl">👤</div>
+            <p className="text-white font-semibold text-sm mb-1">New Broker?</p>
+            <p className="text-slate-400 text-xs mb-3">Create your broker account</p>
+            <span className="text-blue-300 text-xs font-medium">Get Started →</span>
+          </button>
+        </div>
+        <div className="mt-12 grid grid-cols-3 gap-8 max-w-lg">
+          {[['✓ PDF Extraction','Auto-extract key fields'],['✓ Client Portal','Seamless document signing'],['✓ Secure','Bank-grade encryption']].map(([l,d]) => (
+            <div key={l} className="text-center"><p className="text-white text-xs font-semibold">{l}</p><p className="text-slate-500 text-xs">{d}</p></div>
+          ))}
+        </div>
+        <p className="mt-6 text-slate-500 text-xs">Demo login: demo@broker.com / demo1234</p>
+      </div>
+      <footer className="text-center py-4 text-slate-600 text-xs">© 2024 Mortgage Mates. All rights reserved.</footer>
+    </div>
+  );
+}
+
+// ─── Broker Login ─────────────────────────────────────────────────────────────
+function BrokerLogin() {
+  const navigate = useNavigate();
+  const { loginBroker } = useApp();
+  const [email, setEmail] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault(); setErr(''); setLoading(true);
+    await new Promise(r=>setTimeout(r,600));
+    if (loginBroker(email, pwd)) navigate('/broker/dashboard');
+    else setErr('Invalid credentials or account not fully activated.');
+    setLoading(false);
+  }
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-white rounded-2xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto mb-4 text-white text-3xl">🏢</div>
+          <h1 className="text-2xl font-bold text-slate-900">Welcome back</h1>
+          <p className="text-slate-500 text-sm mt-1">Sign in to your broker account</p>
+        </div>
+        <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-6 text-xs text-blue-700">
+          <strong>Demo:</strong> demo@broker.com / demo1234
+        </div>
+        {err && <div className="bg-red-50 border border-red-100 text-red-700 text-sm rounded-xl p-3 mb-4">⚠ {err}</div>}
+        <form onSubmit={submit} className="space-y-4">
+          <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Email Address</label>
+            <input type="email" className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="you@company.com" value={email} onChange={e=>setEmail(e.target.value)} required/></div>
+          <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
+            <input type="password" className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="••••••••" value={pwd} onChange={e=>setPwd(e.target.value)} required/></div>
+          <button type="submit" disabled={loading} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50">
+            {loading ? <><Spinner/> Signing in…</> : 'Sign In'}
+          </button>
+        </form>
+        <p className="text-center text-sm text-slate-500 mt-6">Don't have an account? <button onClick={() => navigate('/broker/signup')} className="text-blue-600 font-medium hover:underline">Register as a broker</button></p>
+        <p className="text-center text-xs text-slate-400 mt-2"><button onClick={() => navigate('/')} className="hover:underline">← Back to home</button></p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Broker Signup (multi-step) ───────────────────────────────────────────────
+function BrokerSignup() {
+  const navigate = useNavigate();
+  const { saveBroker } = useApp();
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState({ name:'', companyName:'', officeAddress:'', postalCode:'', phoneNumber:'', email:'', password:'', confirmPassword:'' });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(false);
+  const [draftId, setDraftId] = useState(null);
+
+  const set = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  function validateStep0() {
+    const e = {};
+    if (!form.name.trim()) e.name = 'Required';
+    if (!form.companyName.trim()) e.companyName = 'Required';
+    if (!form.officeAddress.trim()) e.officeAddress = 'Required';
+    if (!form.postalCode.trim()) e.postalCode = 'Required';
+    if (!/^\+?[\d\s\-()+]{7,}$/.test(form.phoneNumber)) e.phoneNumber = 'Invalid phone number';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = 'Invalid email';
+    if (S.getBrokerByEmail(form.email)) e.email = 'Email already registered';
+    if (form.password.length < 8) e.password = 'Min 8 characters';
+    if (form.password !== form.confirmPassword) e.confirmPassword = 'Passwords do not match';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  }
+
+  async function submitStep0() {
+    if (!validateStep0()) return;
+    setLoading(true);
+    await new Promise(r=>setTimeout(r,700));
+    const id = genId('MM-BR');
+    const now = new Date().toISOString();
+    const b = { id, name:form.name, companyName:form.companyName, officeAddress:form.officeAddress,
+      postalCode:form.postalCode, phoneNumber:form.phoneNumber, email:form.email, password:form.password,
+      emailVerified:false, paymentCompleted:false, subscriptionStart:'', subscriptionEnd:'', createdAt:now };
+    saveBroker(b); setDraftId(id); setLoading(false); setStep(1);
+  }
+
+  async function verifyEmail() {
+    setLoading(true);
+    await new Promise(r=>setTimeout(r,900));
+    const b = S.getBrokerById(draftId);
+    saveBroker({...b, emailVerified:true});
+    setLoading(false); setStep(2);
+  }
+
+  async function completePayment() {
+    setLoading(true);
+    await new Promise(r=>setTimeout(r,1400));
+    const b = S.getBrokerById(draftId);
+    const now = new Date().toISOString();
+    saveBroker({...b, paymentCompleted:true, subscriptionStart:now, subscriptionEnd:new Date(Date.now()+365*86400000).toISOString()});
+    S.setCurrentBroker(draftId);
+    setLoading(false);
+    navigate('/broker/dashboard');
+  }
+
+  const inp = (k, label, type='text', placeholder='') => (
+    <div key={k}>
+      <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>
+      <input type={type} className={`w-full px-3.5 py-2.5 bg-white border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 ${errors[k]?'border-red-400':'border-slate-200'}`}
+        placeholder={placeholder} value={form[k]} onChange={e=>set(k,e.target.value)}/>
+      {errors[k] && <p className="mt-1 text-xs text-red-500">{errors[k]}</p>}
+    </div>
+  );
+
+  const STEPS = ['Your Details','Verify Email','Payment'];
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden">
+        <div className="px-8 pt-8 pb-6 border-b border-slate-100">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold">M</div>
+            <div><p className="font-bold text-slate-900">Mortgage Mates</p><p className="text-xs text-slate-500">Broker Registration</p></div>
+          </div>
+          <div className="flex items-center gap-1">
+            {STEPS.map((s,i) => (
+              <React.Fragment key={s}>
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${i<step?'bg-emerald-500 text-white':i===step?'bg-blue-600 text-white':'bg-slate-100 text-slate-400'}`}>
+                  {i<step?'✓':i+1}
+                </div>
+                <span className={`text-xs font-medium ${i===step?'text-slate-800':'text-slate-400'}`}>{s}</span>
+                {i<STEPS.length-1&&<div className={`flex-1 h-px mx-2 ${i<step?'bg-emerald-400':'bg-slate-200'}`}/>}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+
+        <div className="px-8 py-7">
+          {step===0 && (
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-900 mb-2">Broker Information</h2>
+              <div className="grid grid-cols-2 gap-4">{inp('name','Full Name','text','Jane Smith')}{inp('companyName','Company Name','text','Acme Mortgages Ltd')}</div>
+              {inp('officeAddress','Registered Office Address','text','123 High Street, London')}
+              <div className="grid grid-cols-2 gap-4">{inp('postalCode','Postal Code','text','SW1A 1AA')}{inp('phoneNumber','Phone Number','tel','+44 20 7000 0000')}</div>
+              {inp('email','Official Email Address','email','you@company.com')}
+              <div className="grid grid-cols-2 gap-4">{inp('password','Password','password','••••••••')}{inp('confirmPassword','Confirm Password','password','••••••••')}</div>
+              <button onClick={submitStep0} disabled={loading} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 mt-2">
+                {loading?<><Spinner/>Processing…</>:'Continue →'}
+              </button>
+            </div>
+          )}
+          {step===1 && (
+            <div className="text-center py-4">
+              <div className="text-5xl mb-4">📧</div>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">Verify Your Email</h2>
+              <p className="text-slate-500 text-sm mb-1">A verification email has been sent to:</p>
+              <p className="font-semibold text-blue-600 mb-6">{form.email}</p>
+              <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 text-left mb-6">
+                <p className="text-amber-800 text-sm font-medium mb-1">Demo Mode</p>
+                <p className="text-amber-700 text-xs">In production, you'd click the link in your email. Click below to simulate verification.</p>
+              </div>
+              <button onClick={verifyEmail} disabled={loading} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {loading?<><Spinner/>Verifying…</>:'✓ Confirm Email Verification'}
+              </button>
+            </div>
+          )}
+          {step===2 && (
+            <div>
+              <div className="text-center mb-6">
+                <h2 className="text-xl font-bold text-slate-900">Choose Your Plan</h2>
+                <p className="text-slate-500 text-sm mt-1">Start processing mortgage applications today</p>
+              </div>
+              <div className="border-2 border-blue-500 rounded-2xl p-5 mb-6 bg-blue-50/50">
+                <div className="flex items-center justify-between mb-3">
+                  <div><p className="font-bold text-slate-900 text-lg">Standard Plan</p><p className="text-slate-500 text-xs">Unlimited applications · Priority support</p></div>
+                  <div className="text-right"><p className="text-2xl font-bold text-blue-600">£79</p><p className="text-slate-400 text-xs">/month</p></div>
+                </div>
+                {['Unlimited PDF extractions','Unique broker URL','Client signing portal','Admin reporting','Email notifications'].map(f=>(
+                  <div key={f} className="flex items-center gap-2 mt-2"><span className="text-emerald-500 text-xs">✓</span><span className="text-xs text-slate-600">{f}</span></div>
+                ))}
+              </div>
+              <div className="space-y-4">
+                <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Card Number</label><input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="4242 4242 4242 4242"/></div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Expiry</label><input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="MM / YY"/></div>
+                  <div><label className="block text-sm font-medium text-slate-700 mb-1.5">CVC</label><input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="123"/></div>
+                </div>
+              </div>
+              <button onClick={completePayment} disabled={loading} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 mt-6">
+                {loading?<><Spinner/>Processing payment…</>:'🔒 Pay £79 & Activate Account'}
+              </button>
+              <p className="text-center text-xs text-slate-400 mt-3">Secured by Stripe. Cancel anytime.</p>
+            </div>
+          )}
+        </div>
+        <div className="px-8 pb-6 text-center">
+          <p className="text-xs text-slate-400">Already registered? <button onClick={() => navigate('/broker/login')} className="text-blue-600 hover:underline font-medium">Sign in</button></p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Broker Dashboard ─────────────────────────────────────────────────────────
+function BrokerDashboard() {
+  const navigate = useNavigate();
+  const { currentBroker, getAppsByBroker } = useApp();
+  const [copied, setCopied] = useState(false);
+  if (!currentBroker) { navigate('/broker/login'); return null; }
+
+  const apps = getAppsByBroker(currentBroker.id);
+  const total = apps.length;
+  const completed = apps.filter(a=>['approved','completed'].includes(a.status)).length;
+  const inProg = apps.filter(a=>['pending','in-review','submitted'].includes(a.status)).length;
+  const rejected = apps.filter(a=>a.status==='rejected').length;
+  const rate = total > 0 ? Math.round((completed/total)*100) : 0;
+  const recent = [...apps].sort((a,b)=>new Date(b.updatedAt)-new Date(a.updatedAt)).slice(0,5);
+
+  function copyUrl() {
+    const url = `${window.location.href.replace(/#.*$/,'')}#/client/[APP-ID]`;
+    navigator.clipboard.writeText(`Broker ID: ${currentBroker.id}`).catch(()=>{});
+    setCopied(true); setTimeout(()=>setCopied(false),2000);
+  }
+
+  const StatCard = ({ icon, label, value, color, sub }) => (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm font-medium text-slate-500">{label}</p>
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color} text-white text-lg`}>{icon}</div>
+      </div>
+      <p className="text-3xl font-bold text-slate-900">{value}</p>
+      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+    </div>
+  );
+
+  return (
+    <BrokerLayout>
+      <div className="p-8">
+        <div className="flex items-center justify-between mb-8">
+          <div><h1 className="text-2xl font-bold text-slate-900">Dashboard</h1><p className="text-slate-500 text-sm mt-0.5">Good to see you, {currentBroker.name.split(' ')[0]}</p></div>
+          <button onClick={() => navigate('/broker/applications/new')} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">
+            + New Application
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <StatCard icon="📄" label="Total Applications" value={total} color="bg-blue-500" sub="All time"/>
+          <StatCard icon="✅" label="Completed" value={completed} color="bg-emerald-500" sub="Approved & done"/>
+          <StatCard icon="⏳" label="In Progress" value={inProg} color="bg-amber-500" sub="Pending & review"/>
+          <StatCard icon="📈" label="Success Rate" value={`${rate}%`} color="bg-violet-500" sub="Completion"/>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 mb-6">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Your Broker ID & Portal</p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1 bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 font-mono text-sm text-slate-700 font-semibold">{currentBroker.id}</div>
+            <button onClick={copyUrl} className={`px-4 py-2.5 text-sm font-medium rounded-lg border transition-colors ${copied?'bg-emerald-50 border-emerald-200 text-emerald-600':'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+              {copied ? '✓ Copied!' : '📋 Copy ID'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">Share the unique application URL with clients to access their portal</p>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="font-semibold text-slate-900">Recent Applications</h2>
+            <button onClick={() => navigate('/broker/applications')} className="text-sm text-blue-600 hover:underline font-medium">View all →</button>
+          </div>
+          {recent.length===0 ? (
+            <div className="py-16 text-center">
+              <p className="text-4xl mb-3">📋</p>
+              <p className="text-slate-500 font-medium">No applications yet</p>
+              <button onClick={() => navigate('/broker/applications/new')} className="mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">+ Create First Application</button>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-50">
+              {recent.map(app => (
+                <button key={app.id} onClick={() => navigate(`/broker/applications/${app.id}`)} className="w-full px-6 py-4 hover:bg-slate-50 transition-colors flex items-center gap-4 text-left">
+                  <div className="w-9 h-9 rounded-xl bg-blue-100 flex items-center justify-center shrink-0">📄</div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 truncate">{app.applicationName}</p>
+                    <p className="text-xs text-slate-400 font-mono">{app.id}</p>
+                  </div>
+                  <div className="hidden sm:block w-28"><ProgressBar value={app.progress}/></div>
+                  <StatusBadge status={app.status}/>
+                  <p className="text-xs text-slate-400 hidden md:block shrink-0">{fmtDate(app.createdAt)}</p>
+                  <span className="text-slate-300">→</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="mt-6 grid grid-cols-2 gap-4">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-2">Subscription</p>
+            <p className="text-sm font-semibold text-emerald-600">Active — Standard Plan</p>
+            <p className="text-xs text-slate-400 mt-1">Renews: {currentBroker.subscriptionEnd ? fmtDate(currentBroker.subscriptionEnd) : 'N/A'}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+            <p className="text-xs text-slate-400 font-medium uppercase tracking-wider mb-2">Account</p>
+            <p className="text-sm text-slate-700">{currentBroker.email}</p>
+            <p className="text-xs text-slate-400 mt-1">Registered: {fmtDate(currentBroker.createdAt)}</p>
+          </div>
+        </div>
+      </div>
+    </BrokerLayout>
+  );
+}
+
+// ─── Applications List ────────────────────────────────────────────────────────
+function ApplicationsList() {
+  const navigate = useNavigate();
+  const { currentBroker, getAppsByBroker } = useApp();
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState('all');
+  if (!currentBroker) { navigate('/broker/login'); return null; }
+
+  const apps = getAppsByBroker(currentBroker.id);
+  const FILTERS = ['all','draft','pending','in-review','submitted','approved','rejected','completed'];
+  const filtered = apps.filter(a => {
+    const ms = search==='' || [a.applicationName,a.id,a.clientName,a.clientEmail].some(s=>s.toLowerCase().includes(search.toLowerCase()));
+    const mf = filter==='all' || a.status===filter;
+    return ms && mf;
+  }).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+
+  return (
+    <BrokerLayout>
+      <div className="p-8">
+        <div className="flex items-center justify-between mb-8">
+          <div><h1 className="text-2xl font-bold text-slate-900">Applications</h1><p className="text-slate-500 text-sm">{apps.length} total</p></div>
+          <button onClick={() => navigate('/broker/applications/new')} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">+ New Application</button>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 mb-6">
+          <div className="flex flex-col sm:flex-row gap-4">
+            <input className="flex-1 px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="🔍 Search by name, ID or client email…" value={search} onChange={e=>setSearch(e.target.value)}/>
+            <div className="flex items-center gap-2 flex-wrap">
+              {FILTERS.map(f=>(
+                <button key={f} onClick={()=>setFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors capitalize ${filter===f?'bg-blue-600 text-white':'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                  {f==='all'?'All':STATUS_LABELS[f]||f}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          {filtered.length===0 ? (
+            <div className="py-20 text-center">
+              <p className="text-4xl mb-3">📋</p>
+              <p className="text-slate-500 font-medium">{apps.length===0?'No applications yet':'No results found'}</p>
+              {apps.length===0&&<button onClick={() => navigate('/broker/applications/new')} className="mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700">+ Create First</button>}
+            </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-100 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="col-span-4">Application</div><div className="col-span-2">Client</div>
+                <div className="col-span-2">Status</div><div className="col-span-2">Progress</div>
+                <div className="col-span-1">Date</div><div className="col-span-1"></div>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {filtered.map(app=>(
+                  <button key={app.id} onClick={() => navigate(`/broker/applications/${app.id}`)} className="w-full grid grid-cols-12 gap-4 px-6 py-4 hover:bg-slate-50 transition-colors items-center text-left">
+                    <div className="col-span-4 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0 text-sm">📄</div>
+                      <div className="min-w-0"><p className="text-sm font-semibold text-slate-900 truncate">{app.applicationName}</p><p className="text-xs font-mono text-slate-400">{app.id}</p></div>
+                    </div>
+                    <div className="col-span-2 min-w-0"><p className="text-sm text-slate-700 truncate">{app.clientName}</p><p className="text-xs text-slate-400 truncate">{app.clientEmail}</p></div>
+                    <div className="col-span-2"><StatusBadge status={app.status}/></div>
+                    <div className="col-span-2"><ProgressBar value={app.progress}/></div>
+                    <div className="col-span-1"><p className="text-xs text-slate-400">{fmtDate(app.createdAt)}</p></div>
+                    <div className="col-span-1 flex justify-end text-slate-300">→</div>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </BrokerLayout>
+  );
+}
+
+// ─── New Application ──────────────────────────────────────────────────────────
+function NewApplication() {
+  const navigate = useNavigate();
+  const { currentBroker, saveApp } = useApp();
+  const [appName, setAppName] = useState('');
+  const [clientName, setClientName] = useState('');
+  const [clientEmail, setClientEmail] = useState('');
+  const [commitment, setCommitment] = useState(null);
+  const [credit, setCredit] = useState(null);
+  const [extracting, setExtracting] = useState(false);
+  const [err, setErr] = useState('');
+  const commRef = useRef(); const credRef = useRef();
+
+  if (!currentBroker) { navigate('/broker/login'); return null; }
+
+  function handleFile(setter, e) {
+    const f = e.target.files?.[0];
+    if (f) setter({ name:f.name, size:f.size });
+  }
+
+  async function handleCreate() {
+    if (!appName||!clientName||!clientEmail||!commitment||!credit) { setErr('Please fill all fields and upload both PDFs.'); return; }
+    setErr(''); setExtracting(true);
+    await new Promise(r=>setTimeout(r,2200));
+    const id = genId('MM-APP');
+    const now = new Date().toISOString();
+    const appUrl = `${window.location.href.replace(/#.*$/,'')}#/client/${id}`;
+    const app = { id, brokerId:currentBroker.id, applicationName:appName, clientName, clientEmail,
+      status:'pending', progress:30, createdAt:now, updatedAt:now,
+      commitmentLetterName:commitment.name, creditApplicationName:credit.name,
+      extractedData:extractPdf(), intakeFormData:{}, uniqueUrl:appUrl, signatureStatus:'not-requested' };
+    saveApp(app); setExtracting(false);
+    navigate(`/broker/applications/${id}`);
+  }
+
+  function DropZone({ label, file, setter, inputRef }) {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-slate-700 mb-1.5">{label}</label>
+        {file ? (
+          <div className="flex items-center gap-3 p-4 bg-emerald-50 border-2 border-emerald-200 border-dashed rounded-xl">
+            <span className="text-emerald-500">✅</span>
+            <div className="flex-1 min-w-0"><p className="text-sm font-medium text-emerald-800 truncate">{file.name}</p><p className="text-xs text-emerald-600">{(file.size/1024).toFixed(1)} KB · PDF</p></div>
+            <button onClick={() => inputRef.current?.click()} className="text-xs text-emerald-600 hover:text-emerald-800 font-medium">Replace</button>
+          </div>
+        ) : (
+          <div onClick={() => inputRef.current?.click()} className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-slate-200 hover:border-slate-300 hover:bg-slate-50 rounded-xl cursor-pointer transition-colors">
+            <p className="text-3xl mb-2">📤</p>
+            <p className="text-sm font-medium text-slate-600 mb-1">Drop PDF here or <span className="text-blue-600">browse</span></p>
+            <p className="text-xs text-slate-400">PDF files only</p>
+          </div>
+        )}
+        <input ref={inputRef} type="file" accept=".pdf" hidden onChange={e=>handleFile(setter,e)}/>
+      </div>
+    );
+  }
+
+  return (
+    <BrokerLayout>
+      <div className="p-8 max-w-2xl">
+        <button onClick={() => navigate('/broker/applications')} className="text-sm text-slate-500 hover:text-slate-700 mb-6 flex items-center gap-1">← Back to Applications</button>
+        <h1 className="text-2xl font-bold text-slate-900 mb-2">New Application</h1>
+        <p className="text-slate-500 text-sm mb-8">Upload mortgage documents to extract key fields automatically.</p>
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-semibold text-slate-900 mb-4">Application Details</h2>
+            <div className="space-y-4">
+              <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Application Name</label><input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. Smith Property Purchase" value={appName} onChange={e=>setAppName(e.target.value)}/></div>
+              <div className="grid grid-cols-2 gap-4">
+                <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Client Full Name</label><input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="John Smith" value={clientName} onChange={e=>setClientName(e.target.value)}/></div>
+                <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Client Email</label><input type="email" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="client@email.com" value={clientEmail} onChange={e=>setClientEmail(e.target.value)}/></div>
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+            <h2 className="font-semibold text-slate-900 mb-1">Document Upload</h2>
+            <p className="text-xs text-slate-400 mb-5">AI will extract key mortgage data from these PDFs automatically</p>
+            <div className="space-y-4">
+              <DropZone label="Commitment Letter (PDF)" file={commitment} setter={setCommitment} inputRef={commRef}/>
+              <DropZone label="Credit Application (PDF)" file={credit} setter={setCredit} inputRef={credRef}/>
+            </div>
+          </div>
+          {commitment && credit && (
+            <div className="flex items-start gap-3 bg-blue-50 border border-blue-100 rounded-xl p-4">
+              <span className="text-blue-500">⚡</span>
+              <div><p className="text-sm font-medium text-blue-800">Ready to extract</p><p className="text-xs text-blue-600 mt-0.5">Both documents uploaded. Click below to auto-extract key fields from your PDFs.</p></div>
+            </div>
+          )}
+          {err && <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm text-red-700">⚠ {err}</div>}
+          <div className="flex gap-3">
+            <button onClick={() => navigate('/broker/applications')} className="flex-1 px-4 py-2.5 bg-white text-slate-700 text-sm font-medium rounded-lg border border-slate-200 hover:bg-slate-50">Cancel</button>
+            <button onClick={handleCreate} disabled={!appName||!clientName||!clientEmail||!commitment||!credit||extracting} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {extracting?<><Spinner/>Extracting data…</>:<>⚡ Extract &amp; Create Application</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </BrokerLayout>
+  );
+}
+
+// ─── Application Detail ───────────────────────────────────────────────────────
+function ApplicationDetail() {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { getAppById, saveApp } = useApp();
+  const [app, setApp_] = useState(null);
+  const [intake, setIntake] = useState({});
+  const [status, setStatus] = useState('pending');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [reqSig, setReqSig] = useState(false);
+  const [tab, setTab] = useState('extracted');
+  const [showStatusDrop, setShowStatusDrop] = useState(false);
+
+  useEffect(() => {
+    const a = getAppById(id);
+    if (a) { setApp_(a); setIntake(a.intakeFormData||{}); setStatus(a.status); }
+  }, [id]);
+
+  if (!app) return (
+    <BrokerLayout>
+      <div className="flex items-center justify-center h-64">
+        <p className="text-slate-400">Application not found.</p>
+      </div>
+    </BrokerLayout>
+  );
+
+  const STATUSES = ['draft','pending','in-review','submitted','approved','rejected','completed'];
+  const INTAKE_FIELDS = [
+    { k:'applicantName', l:'Applicant Full Name', sec:'Personal' },
+    { k:'applicantPhone', l:'Phone Number', sec:'Personal' },
+    { k:'applicantEmail', l:'Email Address', sec:'Personal' },
+    { k:'propertyAddress', l:'Property Address', sec:'Property' },
+    { k:'propertyType', l:'Property Type', sec:'Property' },
+    { k:'purchasePrice', l:'Purchase Price', sec:'Financial' },
+    { k:'loanAmount', l:'Loan Amount', sec:'Financial' },
+    { k:'downPayment', l:'Down Payment', sec:'Financial' },
+    { k:'loanType', l:'Loan Type', sec:'Financial' },
+    { k:'interestRate', l:'Interest Rate', sec:'Financial' },
+    { k:'loanTerm', l:'Loan Term', sec:'Financial' },
+    { k:'closingDate', l:'Expected Closing Date', sec:'Timeline' },
+    { k:'notes', l:'Broker Notes', sec:'Notes' },
+  ];
+  const sections = ['Personal','Property','Financial','Timeline','Notes'].map(sec=>({ sec, fields:INTAKE_FIELDS.filter(f=>f.sec===sec) }));
+
+  async function handleSave() {
+    setSaving(true);
+    await new Promise(r=>setTimeout(r,500));
+    const filled = INTAKE_FIELDS.filter(f=>intake[f.k]?.trim()).length;
+    const progress = Math.min(100, Math.round(30 + (filled/INTAKE_FIELDS.length)*50 + (['approved','completed'].includes(status)?20:0)));
+    const updated = {...app, intakeFormData:intake, status, progress, updatedAt:new Date().toISOString()};
+    saveApp(updated); setApp_(updated);
+    setSaving(false); setSaved(true); setTimeout(()=>setSaved(false),3000);
+  }
+
+  async function requestSig() {
+    setReqSig(true); await new Promise(r=>setTimeout(r,800));
+    const updated = {...app, signatureStatus:'pending', updatedAt:new Date().toISOString()};
+    saveApp(updated); setApp_(updated); setReqSig(false);
+  }
+
+  function copyUrl() {
+    const url = app.uniqueUrl || `${window.location.href.replace(/#.*$/,'')}#/client/${app.id}`;
+    navigator.clipboard.writeText(url).catch(()=>{});
+    setCopied(true); setTimeout(()=>setCopied(false),2000);
+  }
+
+  const extracted = app.extractedData || {};
+
+  return (
+    <BrokerLayout>
+      <div className="p-8">
+        <button onClick={() => navigate('/broker/applications')} className="text-sm text-slate-500 hover:text-slate-700 mb-6 flex items-center gap-1">← Back to Applications</button>
+        <div className="flex items-start justify-between mb-6 gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">{app.applicationName}</h1>
+            <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+              <span className="text-xs font-mono text-slate-400 bg-slate-100 px-2 py-0.5 rounded">{app.id}</span>
+              <StatusBadge status={app.status}/>
+              <span className="text-xs text-slate-400">Created {fmtDate(app.createdAt)}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {saved && <span className="text-emerald-600 text-sm font-medium">✓ Saved</span>}
+            <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+              {saving?<><Spinner/>Saving…</>:'💾 Save Changes'}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-6">
+          <div className="col-span-2 space-y-6">
+            {/* Progress */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-sm font-semibold text-slate-700">Progress</p>
+                <span className="text-sm font-bold text-blue-600">{app.progress}%</span>
+              </div>
+              <ProgressBar value={app.progress}/>
+            </div>
+
+            {/* Tabs */}
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="flex border-b border-slate-100">
+                {['extracted','intake'].map(t=>(
+                  <button key={t} onClick={()=>setTab(t)} className={`flex-1 py-3.5 text-sm font-medium transition-colors ${tab===t?'border-b-2 border-blue-600 text-blue-600 bg-blue-50/50':'text-slate-500 hover:text-slate-700'}`}>
+                    {t==='extracted'?'📄 Extracted Data':'✏️ Intake Form'}
+                  </button>
+                ))}
+              </div>
+              {tab==='extracted' && (
+                <div className="p-6">
+                  {Object.keys(extracted).length===0 ? (
+                    <div className="text-center py-10"><p className="text-4xl mb-3">📄</p><p className="text-slate-500 text-sm">No extracted data</p></div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 mb-4 p-3 bg-blue-50 border border-blue-100 rounded-xl">
+                        <span className="text-blue-500">✓</span>
+                        <p className="text-xs text-blue-700 font-medium">{Object.keys(extracted).length} fields extracted from your PDFs</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+                        {Object.entries(extracted).map(([k,v])=>(
+                          <div key={k}><p className="text-xs font-medium text-slate-400 capitalize mb-0.5">{k.replace(/([A-Z])/g,' $1').trim()}</p><p className="text-sm font-medium text-slate-800">{v}</p></div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+              {tab==='intake' && (
+                <div className="p-6 space-y-6">
+                  {sections.map(({ sec, fields }) => (
+                    <div key={sec}>
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-3 pb-2 border-b border-slate-100">{sec}</p>
+                      <div className="grid grid-cols-2 gap-4">
+                        {fields.map(f=>(
+                          <div key={f.k} className={f.k==='notes'?'col-span-2':''}>
+                            <label className="block text-sm font-medium text-slate-700 mb-1.5">{f.l}</label>
+                            {f.k==='notes' ? (
+                              <textarea className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" rows={3}
+                                value={intake[f.k]||(extracted[f.k]||'')} onChange={e=>setIntake(p=>({...p,[f.k]:e.target.value}))}/>
+                            ) : (
+                              <input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder={extracted[f.k]?`Extracted: ${extracted[f.k]}`:''}
+                                value={intake[f.k]||(extracted[f.k]||'')} onChange={e=>setIntake(p=>({...p,[f.k]:e.target.value}))}/>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Sidebar */}
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Client</p>
+              <p className="font-semibold text-slate-900">{app.clientName}</p>
+              <p className="text-sm text-slate-500 mt-0.5">{app.clientEmail}</p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Status</p>
+              <div className="relative">
+                <button onClick={()=>setShowStatusDrop(v=>!v)} className="w-full flex items-center justify-between px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm">
+                  <StatusBadge status={status}/> <span className="text-slate-400">▾</span>
+                </button>
+                {showStatusDrop && (
+                  <div className="absolute z-10 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1">
+                    {STATUSES.map(s=>(
+                      <button key={s} onClick={()=>{setStatus(s);setShowStatusDrop(false);}} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-left">
+                        <StatusBadge status={s}/>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Documents</p>
+              {app.commitmentLetterName ? <p className="text-xs text-emerald-600 flex items-center gap-1 mb-1.5"><span>✓</span><span className="truncate">{app.commitmentLetterName}</span></p> : <p className="text-xs text-slate-400">No commitment letter</p>}
+              {app.creditApplicationName ? <p className="text-xs text-emerald-600 flex items-center gap-1"><span>✓</span><span className="truncate">{app.creditApplicationName}</span></p> : <p className="text-xs text-slate-400">No credit application</p>}
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Client Access URL</p>
+              <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 font-mono text-xs text-slate-500 break-all mb-3">
+                {app.uniqueUrl || `…/client/${app.id}`}
+              </div>
+              <button onClick={copyUrl} className={`w-full px-4 py-2.5 text-xs font-medium rounded-lg border transition-colors ${copied?'bg-emerald-50 border-emerald-200 text-emerald-600':'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                {copied?'✓ Copied!':'📋 Copy Client URL'}
+              </button>
+              <p className="text-xs text-slate-400 mt-2 text-center">Share this URL with your client offline</p>
+            </div>
+
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">Client Signature</p>
+              {app.signatureStatus==='signed' ? (
+                <div className="text-emerald-600 text-sm font-medium">✓ Signed {app.signedAt?fmtDT(app.signedAt):''}</div>
+              ) : app.signatureStatus==='pending' ? (
+                <div className="text-amber-600 text-sm font-medium">✏️ Awaiting client signature</div>
+              ) : (
+                <button onClick={requestSig} disabled={reqSig} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                  {reqSig?<><Spinner/>Requesting…</>:'📨 Request Signature'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </BrokerLayout>
+  );
+}
+
+// ─── Client View ─────────────────────────────────────────────────────────────
+function ClientView() {
+  const { applicationId } = useParams();
+  const [app, setApp_] = useState(undefined);
+  const [showSign, setShowSign] = useState(false);
+  const [sigName, setSigName] = useState('');
+  const [sigDrawn, setSigDrawn] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [signDone, setSignDone] = useState(false);
+
+  useEffect(() => { const a = S.getAppById(applicationId); setApp_(a??null); }, [applicationId]);
+
+  if (app===undefined) return <div className="min-h-screen bg-slate-50 flex items-center justify-center"><Spinner/></div>;
+
+  if (app===null) return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 to-blue-950 flex items-center justify-center p-4 text-center">
+      <div><p className="text-5xl mb-4">❌</p><h1 className="text-white text-xl font-bold mb-2">Application Not Found</h1><p className="text-slate-400 text-sm">The link may be incorrect. Please contact your broker.</p></div>
+    </div>
+  );
+
+  const STATUS_INFO = {
+    draft:       { icon:'⏳', color:'text-slate-600',   bg:'bg-slate-100',   title:'Draft',      desc:'Being prepared by your broker.' },
+    pending:     { icon:'⏳', color:'text-amber-600',   bg:'bg-amber-100',   title:'Pending',    desc:'Submitted and awaiting review.' },
+    'in-review': { icon:'📋', color:'text-blue-600',    bg:'bg-blue-100',    title:'In Review',  desc:'Currently being reviewed by the lender.' },
+    submitted:   { icon:'📋', color:'text-purple-600',  bg:'bg-purple-100',  title:'Submitted',  desc:'Formally submitted to the lender.' },
+    approved:    { icon:'✅', color:'text-emerald-600', bg:'bg-emerald-100', title:'Approved',   desc:'Congratulations! Your mortgage application has been approved.' },
+    rejected:    { icon:'❌', color:'text-red-600',     bg:'bg-red-100',     title:'Rejected',   desc:'Not approved. Please contact your broker.' },
+    completed:   { icon:'🎉', color:'text-teal-600',    bg:'bg-teal-100',    title:'Completed',  desc:'Your mortgage application is complete!' },
+  };
+  const info = STATUS_INFO[app.status] || STATUS_INFO.pending;
+
+  const steps = [
+    { label:'Application Created', done:true, date:fmtDate(app.createdAt) },
+    { label:'Documents Uploaded', done:!!(app.commitmentLetterName && app.creditApplicationName) },
+    { label:'Under Review', done:['in-review','submitted','approved','completed'].includes(app.status) },
+    { label:'Decision Made', done:['approved','rejected','completed'].includes(app.status) },
+    { label:'Signed & Complete', done:app.signatureStatus==='signed' },
+  ];
+
+  async function handleSign() {
+    if (!sigName.trim()||!sigDrawn) return;
+    setSigning(true); await new Promise(r=>setTimeout(r,1400));
+    const updated = {...app, signatureStatus:'signed', signedAt:new Date().toISOString(), clientSignature:sigName, progress:Math.min(100,(app.progress||0)+20), updatedAt:new Date().toISOString()};
+    S.saveApp(updated); setApp_(updated); setSigning(false); setSignDone(true); setShowSign(false);
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900">
+      <header className="px-6 py-5 border-b border-white/10">
+        <div className="max-w-2xl mx-auto flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-500 flex items-center justify-center text-white font-bold">M</div>
+          <div><p className="text-white font-bold text-sm">Mortgage Mates</p><p className="text-blue-300 text-xs">Client Application Portal</p></div>
+        </div>
+      </header>
+      <div className="max-w-2xl mx-auto px-6 py-10">
+        {signDone && (
+          <div className="mb-6 flex items-center gap-3 bg-emerald-500/20 border border-emerald-500/30 rounded-2xl p-4">
+            <span className="text-emerald-400 text-xl">✓</span>
+            <div><p className="text-emerald-300 font-semibold text-sm">Documents signed successfully!</p><p className="text-emerald-400/70 text-xs mt-0.5">Your signature has been recorded. Your broker will be notified.</p></div>
+          </div>
+        )}
+
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-7 mb-6">
+          <div className="flex items-start justify-between mb-6">
+            <div>
+              <p className="text-xs text-slate-400 uppercase tracking-wider mb-1.5">Application</p>
+              <h1 className="text-2xl font-bold text-white">{app.applicationName}</h1>
+              <p className="text-sm font-mono text-blue-400 mt-1">{app.id}</p>
+            </div>
+            <div className={`w-14 h-14 rounded-2xl ${info.bg} flex items-center justify-center text-3xl`}>{info.icon}</div>
+          </div>
+          <div className={`${info.bg} rounded-xl px-4 py-3 mb-6`}>
+            <p className={`text-sm font-semibold ${info.color} mb-0.5`}>{info.title}</p>
+            <p className={`text-xs ${info.color} opacity-80`}>{info.desc}</p>
+          </div>
+          <div className="grid grid-cols-2 gap-4 mb-6">
+            <div><p className="text-xs text-slate-500 mb-1">Client Name</p><p className="text-sm font-medium text-white">{app.clientName}</p></div>
+            <div><p className="text-xs text-slate-500 mb-1">Created</p><p className="text-sm font-medium text-white">{fmtDate(app.createdAt)}</p></div>
+          </div>
+          <div className="mb-6">
+            <div className="flex items-center justify-between mb-2"><p className="text-xs text-slate-400">Progress</p><p className="text-xs font-bold text-blue-400">{app.progress}%</p></div>
+            <div className="h-2 bg-white/10 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 rounded-full transition-all duration-700" style={{width:`${app.progress}%`}}/>
+            </div>
+          </div>
+          {app.signatureStatus==='pending' && !signDone && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 mb-4">
+              <p className="text-amber-300 font-semibold text-sm mb-1.5">✏️ Signature Required</p>
+              <p className="text-xs text-amber-400/80 mb-3">Your broker has requested your signature to proceed.</p>
+              <button onClick={()=>setShowSign(true)} className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-white text-sm font-semibold rounded-xl transition-colors">Sign Documents</button>
+            </div>
+          )}
+          {app.signatureStatus==='signed' && (
+            <div className="flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+              <span className="text-emerald-400">✓</span>
+              <div><p className="text-emerald-300 text-sm font-semibold">Documents Signed</p>{app.signedAt&&<p className="text-xs text-emerald-400/70">{fmtDT(app.signedAt)}</p>}</div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-5">Application Timeline</p>
+          {steps.map((step,i)=>(
+            <div key={step.label} className="flex items-start gap-4">
+              <div className="flex flex-col items-center">
+                <div className={`w-7 h-7 rounded-full border-2 flex items-center justify-center text-xs ${step.done?'bg-blue-500 border-blue-500 text-white':'bg-transparent border-slate-600 text-slate-600'}`}>
+                  {step.done?'✓':''}
+                </div>
+                {i<steps.length-1&&<div className={`w-0.5 h-8 mt-1 ${step.done?'bg-blue-500/40':'bg-slate-700'}`}/>}
+              </div>
+              <div className="pb-6">
+                <p className={`text-sm font-medium mt-0.5 ${step.done?'text-white':'text-slate-500'}`}>{step.label}</p>
+                {step.date&&<p className="text-xs text-slate-500 mt-0.5">{step.date}</p>}
+              </div>
+            </div>
+          ))}
+        </div>
+        <p className="text-center text-slate-600 text-xs mt-8">Questions? Contact your broker directly. · Mortgage Mates © 2024</p>
+      </div>
+
+      {showSign && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/80" onClick={()=>setShowSign(false)}/>
+          <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl p-7">
+            <h3 className="text-lg font-bold text-slate-900 mb-2">Sign Documents</h3>
+            <p className="text-sm text-slate-500 mb-6">By signing below, you confirm all information is accurate and agree to the mortgage terms.</p>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Full Legal Name</label>
+              <input className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type your full name" value={sigName} onChange={e=>setSigName(e.target.value)}/>
+            </div>
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Signature</label>
+              <div onClick={()=>setSigDrawn(true)} className={`h-28 border-2 border-dashed rounded-xl flex items-center justify-center cursor-pointer transition-colors ${sigDrawn?'border-blue-400 bg-blue-50':'border-slate-200 hover:border-slate-300'}`}>
+                {sigDrawn ? <p className="text-blue-700 font-bold text-xl" style={{fontFamily:'cursive'}}>{sigName||'Signed'}</p> : <p className="text-slate-400 text-sm">Click to add signature</p>}
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={()=>setShowSign(false)} className="flex-1 px-4 py-2.5 bg-white text-slate-700 text-sm font-medium rounded-lg border border-slate-200 hover:bg-slate-50">Cancel</button>
+              <button onClick={handleSign} disabled={!sigName.trim()||!sigDrawn||signing} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                {signing?<><Spinner/>Signing…</>:'✓ Confirm & Sign'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Admin Login ──────────────────────────────────────────────────────────────
+function AdminLogin() {
+  const navigate = useNavigate();
+  const { loginAdmin } = useApp();
+  const [email, setEmail] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [err, setErr] = useState('');
+  const [loading, setLoading] = useState(false);
+  async function submit(e) {
+    e.preventDefault(); setErr(''); setLoading(true);
+    await new Promise(r=>setTimeout(r,600));
+    if (loginAdmin(email,pwd)) navigate('/admin/dashboard');
+    else setErr('Invalid administrator credentials.');
+    setLoading(false);
+  }
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-violet-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <div className="w-14 h-14 rounded-2xl bg-violet-600 flex items-center justify-center mx-auto mb-4 text-white text-3xl">🔒</div>
+          <h1 className="text-2xl font-bold text-slate-900">Admin Access</h1>
+          <p className="text-slate-500 text-sm mt-1">Restricted to authorised administrators</p>
+        </div>
+        <div className="bg-violet-50 border border-violet-100 rounded-xl p-3 mb-6 text-xs text-violet-700">
+          <strong>Demo:</strong> admin@mortgagemates.com / admin@MM2024
+        </div>
+        {err && <div className="bg-red-50 border border-red-100 text-red-700 text-sm rounded-xl p-3 mb-4">⚠ {err}</div>}
+        <form onSubmit={submit} className="space-y-4">
+          <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label><input type="email" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" value={email} onChange={e=>setEmail(e.target.value)} required/></div>
+          <div><label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label><input type="password" className="w-full px-3.5 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-violet-500" value={pwd} onChange={e=>setPwd(e.target.value)} required/></div>
+          <button type="submit" disabled={loading} className="flex items-center justify-center gap-2 w-full px-4 py-2.5 bg-violet-600 text-white text-sm font-medium rounded-lg hover:bg-violet-700 disabled:opacity-50">
+            {loading?<><Spinner/>Signing in…</>:'Sign In as Admin'}
+          </button>
+        </form>
+        <p className="text-center text-xs text-slate-400 mt-6"><button onClick={() => navigate('/')} className="hover:underline">← Back to home</button></p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Admin Dashboard ──────────────────────────────────────────────────────────
+function AdminDashboard() {
+  const navigate = useNavigate();
+  const { getBrokers, getAllApps } = useApp();
+  const brokers = getBrokers();
+  const apps = getAllApps();
+  const activeBrokers = brokers.filter(b=>b.paymentCompleted&&b.emailVerified).length;
+  const approved = apps.filter(a=>['approved','completed'].includes(a.status)).length;
+
+  const StatCard = ({ icon, label, value, color, sub }) => (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm font-medium text-slate-500">{label}</p>
+        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color} text-white text-lg`}>{icon}</div>
+      </div>
+      <p className="text-3xl font-bold text-slate-900">{value}</p>
+      {sub&&<p className="text-xs text-slate-400 mt-1">{sub}</p>}
+    </div>
+  );
+
+  return (
+    <AdminLayout>
+      <div className="p-8">
+        <div className="mb-8"><h1 className="text-2xl font-bold text-slate-900">Admin Dashboard</h1><p className="text-slate-500 text-sm mt-0.5">Platform overview and broker management</p></div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <StatCard icon="👥" label="Total Brokers" value={brokers.length} color="bg-violet-500" sub="Registered"/>
+          <StatCard icon="🏢" label="Active Brokers" value={activeBrokers} color="bg-blue-500" sub="Subscribed"/>
+          <StatCard icon="📄" label="Total Applications" value={apps.length} color="bg-amber-500" sub="All brokers"/>
+          <StatCard icon="✅" label="Approved" value={approved} color="bg-emerald-500" sub="Successfully closed"/>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="font-semibold text-slate-900">Registered Brokers</h2>
+            <span className="text-xs text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full font-medium">{brokers.length} total</span>
+          </div>
+          {brokers.length===0 ? (
+            <div className="py-16 text-center"><p className="text-4xl mb-3">👥</p><p className="text-slate-500">No brokers registered yet</p></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-100 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="col-span-3">Broker</div><div className="col-span-2">Broker ID</div>
+                <div className="col-span-3">Company</div><div className="col-span-1">Apps</div>
+                <div className="col-span-2">Subscription End</div><div className="col-span-1"></div>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {brokers.map(b=>{
+                  const bApps = apps.filter(a=>a.brokerId===b.id);
+                  const isActive = b.paymentCompleted && b.emailVerified;
+                  const expired = b.subscriptionEnd && new Date(b.subscriptionEnd)<new Date();
+                  return (
+                    <button key={b.id} onClick={()=>navigate(`/admin/brokers/${b.id}`)} className="w-full grid grid-cols-12 gap-4 px-6 py-4 hover:bg-slate-50 transition-colors items-center text-left">
+                      <div className="col-span-3 flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-violet-100 flex items-center justify-center text-violet-600 font-bold text-sm shrink-0">{b.name.charAt(0)}</div>
+                        <div className="min-w-0"><p className="text-sm font-semibold text-slate-900 truncate">{b.name}</p><p className="text-xs text-slate-400 truncate">{b.email}</p></div>
+                      </div>
+                      <div className="col-span-2"><p className="text-xs font-mono text-violet-600 font-semibold">{b.id}</p></div>
+                      <div className="col-span-3 min-w-0"><p className="text-sm text-slate-600 truncate">{b.companyName}</p></div>
+                      <div className="col-span-1"><span className="text-sm font-bold text-slate-900">{bApps.length}</span></div>
+                      <div className="col-span-2">
+                        <p className="text-xs text-slate-500">{b.subscriptionEnd?fmtDate(b.subscriptionEnd):'—'}</p>
+                        <span className={`text-xs font-medium ${isActive?(expired?'text-red-500':'text-emerald-600'):'text-slate-400'}`}>{isActive?(expired?'Expired':'Active'):'Inactive'}</span>
+                      </div>
+                      <div className="col-span-1 flex justify-end text-slate-300">→</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+// ─── Admin Broker Detail ──────────────────────────────────────────────────────
+function AdminBrokerDetail() {
+  const { brokerId } = useParams();
+  const navigate = useNavigate();
+  const { getBrokerById, getAppsByBroker, saveApp, getAppById } = useApp();
+  const broker = getBrokerById(brokerId);
+  const [openDrop, setOpenDrop] = useState(null);
+  const [saving, setSaving] = useState(null);
+  const [savedId, setSavedId] = useState(null);
+
+  if (!broker) return <AdminLayout><div className="flex items-center justify-center h-64"><p className="text-slate-400">Broker not found.</p></div></AdminLayout>;
+
+  const apps = getAppsByBroker(broker.id);
+  const isActive = broker.paymentCompleted && broker.emailVerified;
+  const expired = broker.subscriptionEnd && new Date(broker.subscriptionEnd)<new Date();
+  const STATUSES = ['draft','pending','in-review','submitted','approved','rejected','completed'];
+
+  async function changeStatus(appId, status) {
+    setOpenDrop(null); setSaving(appId);
+    await new Promise(r=>setTimeout(r,500));
+    const app = getAppById(appId);
+    if (app) {
+      const progress = status==='approved'||status==='completed'?100:status==='submitted'?80:status==='in-review'?60:status==='pending'?30:app.progress;
+      saveApp({...app, status, progress, updatedAt:new Date().toISOString()});
+    }
+    setSaving(null); setSavedId(appId); setTimeout(()=>setSavedId(null),2000);
+  }
+
+  return (
+    <AdminLayout>
+      <div className="p-8">
+        <button onClick={()=>navigate('/admin/dashboard')} className="text-sm text-slate-500 hover:text-slate-700 mb-6 flex items-center gap-1">← Back to Dashboard</button>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-6">
+          <div className="flex items-start gap-5">
+            <div className="w-16 h-16 rounded-2xl bg-violet-100 flex items-center justify-center text-2xl font-bold text-violet-600 shrink-0">{broker.name.charAt(0)}</div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between flex-wrap gap-3">
+                <div>
+                  <h1 className="text-xl font-bold text-slate-900">{broker.name}</h1>
+                  <p className="text-slate-500">{broker.companyName}</p>
+                  <p className="text-xs font-mono text-violet-600 font-semibold mt-1">{broker.id}</p>
+                </div>
+                <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${isActive?(expired?'bg-red-100 text-red-700':'bg-emerald-100 text-emerald-700'):'bg-slate-100 text-slate-500'}`}>
+                  {isActive?(expired?'Subscription Expired':'Active Subscriber'):'Inactive'}
+                </span>
+              </div>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <p className="text-sm text-slate-600">📧 {broker.email}</p>
+                <p className="text-sm text-slate-600">📞 {broker.phoneNumber}</p>
+                <p className="text-sm text-slate-600">📍 {broker.officeAddress}, {broker.postalCode}</p>
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            {[
+              { label:'Email Verified', value:broker.emailVerified?'Verified':'Not Verified', ok:broker.emailVerified },
+              { label:'Payment', value:broker.paymentCompleted?'Completed':'Pending', ok:broker.paymentCompleted },
+              { label:'Sub Start', value:broker.subscriptionStart?fmtDate(broker.subscriptionStart):'—', ok:true },
+              { label:'Sub End', value:broker.subscriptionEnd?fmtDate(broker.subscriptionEnd):'—', ok:!expired },
+            ].map(({label,value,ok})=>(
+              <div key={label}><p className="text-xs text-slate-400 font-medium mb-1">{label}</p><p className={`text-sm font-semibold ${ok?'text-emerald-600':'text-red-500'}`}>{value}</p></div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h2 className="font-semibold text-slate-900">Applications</h2>
+            <span className="text-xs text-slate-400 bg-slate-100 px-2.5 py-1 rounded-full">{apps.length} total</span>
+          </div>
+          {apps.length===0 ? (
+            <div className="py-16 text-center"><p className="text-4xl mb-3">📋</p><p className="text-slate-500">No applications under this broker</p></div>
+          ) : (
+            <>
+              <div className="grid grid-cols-12 gap-4 px-6 py-3 bg-slate-50 border-b border-slate-100 text-xs font-semibold uppercase tracking-wider text-slate-400">
+                <div className="col-span-4">Application</div><div className="col-span-2">Client</div>
+                <div className="col-span-2">Progress</div><div className="col-span-3">Status (Admin Control)</div><div className="col-span-1"></div>
+              </div>
+              <div className="divide-y divide-slate-50">
+                {apps.map(app=>(
+                  <div key={app.id} className="grid grid-cols-12 gap-4 px-6 py-4 items-center">
+                    <div className="col-span-4 flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0 text-sm">📄</div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-900 truncate">{app.applicationName}</p>
+                        <p className="text-xs font-mono text-slate-400">{app.id}</p>
+                        <p className="text-xs text-slate-400">{fmtDate(app.createdAt)}</p>
+                      </div>
+                    </div>
+                    <div className="col-span-2 min-w-0">
+                      <p className="text-sm text-slate-700 truncate">{app.clientName}</p>
+                      <p className="text-xs text-slate-400 truncate">{app.clientEmail}</p>
+                    </div>
+                    <div className="col-span-2"><ProgressBar value={app.progress}/></div>
+                    <div className="col-span-3 relative">
+                      {savedId===app.id ? (
+                        <span className="text-emerald-600 text-sm font-medium">✓ Updated</span>
+                      ) : saving===app.id ? (
+                        <div className="flex items-center gap-2 text-slate-500 text-sm"><Spinner/>Saving…</div>
+                      ) : (
+                        <div className="relative">
+                          <button onClick={()=>setOpenDrop(openDrop===app.id?null:app.id)} className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm hover:bg-slate-100 w-full">
+                            <StatusBadge status={app.status}/> <span className="ml-auto text-slate-400">▾</span>
+                          </button>
+                          {openDrop===app.id && (
+                            <div className="absolute z-20 top-full left-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl py-1 min-w-[160px]">
+                              {STATUSES.map(s=>(
+                                <button key={s} onClick={()=>changeStatus(app.id,s)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-50 text-left">
+                                  <StatusBadge status={s}/>{s===app.status&&<span className="ml-auto text-blue-500 text-xs">✓</span>}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="col-span-1 flex justify-end">
+                      <button onClick={()=>navigate(`/broker/applications/${app.id}`)} className="p-1.5 text-slate-400 hover:text-slate-600">→</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </AdminLayout>
+  );
+}
+
+// ─── Protected Wrappers ───────────────────────────────────────────────────────
+function RequireBroker({ children }) {
+  const { currentBroker } = useApp();
+  const navigate = useNavigate();
+  useEffect(() => { if (!currentBroker) navigate('/broker/login'); }, [currentBroker]);
+  if (!currentBroker) return null;
+  return children;
+}
+
+function RequireAdmin({ children }) {
+  const { isAdminAuthed } = useApp();
+  const navigate = useNavigate();
+  useEffect(() => { if (!isAdminAuthed) navigate('/admin'); }, [isAdminAuthed]);
+  if (!isAdminAuthed) return null;
+  return children;
+}
+
+// ─── App Root ─────────────────────────────────────────────────────────────────
+function App() {
+  // seedData already called before mount
+
+  return (
+    <Router>
+      <AppProvider>
+        <Routes>
+          <Route path="/" element={<Landing/>}/>
+          <Route path="/broker/login" element={<BrokerLogin/>}/>
+          <Route path="/broker/signup" element={<BrokerSignup/>}/>
+          <Route path="/broker/dashboard" element={<RequireBroker><BrokerDashboard/></RequireBroker>}/>
+          <Route path="/broker/applications" element={<RequireBroker><ApplicationsList/></RequireBroker>}/>
+          <Route path="/broker/applications/new" element={<RequireBroker><NewApplication/></RequireBroker>}/>
+          <Route path="/broker/applications/:id" element={<RequireBroker><ApplicationDetail/></RequireBroker>}/>
+          <Route path="/client/:applicationId" element={<ClientView/>}/>
+          <Route path="/admin" element={<AdminLogin/>}/>
+          <Route path="/admin/dashboard" element={<RequireAdmin><AdminDashboard/></RequireAdmin>}/>
+          <Route path="/admin/brokers" element={<RequireAdmin><AdminDashboard/></RequireAdmin>}/>
+          <Route path="/admin/brokers/:brokerId" element={<RequireAdmin><AdminBrokerDetail/></RequireAdmin>}/>
+        </Routes>
+      </AppProvider>
+    </Router>
+  );
+}
+
+// ─── Route switcher ───────────────────────────────────────────────────────────
+function Routes({ children }) {
+  const { path } = useContext(RouterCtx);
+  let matched = null;
+  React.Children.forEach(children, child => {
+    if (matched) return;
+    const params = matchPath(child.props.path, path.split('?')[0]);
+    if (params !== null) matched = React.cloneElement(child, { _params: params });
+  });
+  return matched || null;
+}
+
+// Patch Route to use _params
+function Route({ path: p, element, _params }) {
+  const ctx = useContext(RouterCtx);
+  if (_params === undefined) return null;
+  return <RouterCtx.Provider value={{...ctx, params:_params}}>{element}</RouterCtx.Provider>;
+}
+
+// Run seed data synchronously before first render
+seedData();
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
